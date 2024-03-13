@@ -54,21 +54,29 @@ struct AlloApp : public App {
 
   void onSound(AudioIOData& io) override {
     // audio throughput
+    float bufferPower = 0;
+    float volFactor = dBtoA(volControl);
     while(io()) { 
     if (filePlayback) {
       for (int i = 0; i < io.channelsOut(); i++) {
         if (i % 2 == 0) {
-          io.out(i) = player(0) * dBtoA(volControl) * audioOutput;
+          io.out(i) = player(0) * volFactor * audioOutput;
         } else {
-          io.out(i) = player(1) * dBtoA(volControl) * audioOutput;
+          io.out(i) = player(1) * volFactor * audioOutput;
         }
       }
     } else {
       for (int i = 0; i < io.channelsOut(); i++) {
-        io.out(i) = io.in(0) * dBtoA(volControl) * audioOutput; // <- feedback risk!
+        io.out(i) = io.in(0) * volFactor * audioOutput; // <- feedback risk!
       }
     }
+    // audio analysis
+    for (int channel = 0; channel < io.channelsIn(); channel++){
+      bufferPower += powf(io.in(channel) * volFactor, 2);
     }
+    }
+    bufferPower /= io.framesPerBuffer();
+    rmsMeter = ampTodB(bufferPower);
   }
 
   void onDraw(Graphics &g) {
