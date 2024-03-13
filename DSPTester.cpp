@@ -18,12 +18,32 @@ float ampTodB (float ampVal) {
   return dBVal;
 }
 
-struct AlloApp : public App {
+class DelayLine {
+public:
+  void pushSample (float sample) {
+    buffer[writeIndex] = sample;
+    writeIndex = (writeIndex + 1) % bufferSize;
+  }
+
+  float popSample (int delayTimeInSamples) {
+    readIndex = (writeIndex - delayTimeInSamples + bufferSize) % bufferSize;
+    return buffer[readIndex];
+  }
+
+private:
+  static const int bufferSize = 96000;
+  float buffer[bufferSize];
+  int readIndex;
+  int writeIndex;
+};
+
+struct DSPTester : public App {
   Parameter volControl{"volControl", "", 0.f, -96.f, 6.f};
   Parameter rmsMeter{"rmsMeter", "", -96.f, -96.f, 0.f};
   ParameterBool audioOutput{"audioOutput", "", false, 0.f, 1.f};
   ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
   gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
+  DelayLine delayLine;
 
   void onInit() {
     // set up GUI
@@ -57,6 +77,7 @@ struct AlloApp : public App {
     float bufferPower = 0;
     float volFactor = dBtoA(volControl);
     while(io()) { 
+    delayLine.pushSample(io.in(0));
     if (filePlayback) {
       for (int i = 0; i < io.channelsOut(); i++) {
         if (i % 2 == 0) {
@@ -67,12 +88,16 @@ struct AlloApp : public App {
       }
     } else {
       for (int i = 0; i < io.channelsOut(); i++) {
-        io.out(i) = io.in(0) * volFactor * audioOutput; // <- feedback risk!
+        if (i % 2 == 0) {
+          io.out(i) = io.in(0) * volFactor * audioOutput;
+        } else {
+          io.out(i) = (io.in(1) + delayLine.popSample(44100)) * volFactor * audioOutput;
+        }
       }
     }
     // audio analysis
     for (int channel = 0; channel < io.channelsIn(); channel++){
-      bufferPower += powf(io.in(channel) * volFactor, 2);
+      bufferPower += powf(io.out(channel), 2);
     }
     }
     bufferPower /= io.framesPerBuffer();
@@ -85,12 +110,24 @@ struct AlloApp : public App {
 };
   
 int main() {
-  AlloApp app;
+  DSPTester app;
 
+  // Allows for manual declaration of input and output devices, 
+  // but causes unpredictable behavior. Needs investigation.
+  app.audioIO().deviceIn(AudioDevice("BlackHole 2ch"));
+  app.audioIO().deviceOut(AudioDevice("MacBook Pro Speakers"));
+  cout << "outs: " << app.audioIO().channelsOutDevice() << endl;
+  cout << "ins: " << app.audioIO().channelsInDevice() << endl;
+  app.player.rate(1.0 / app.audioIO().channelsOutDevice());
+  app.configureAudio(44100, 128, app.audioIO().channelsOutDevice(), app.audioIO().channelsInDevice());
+
+  /* 
+  // Declaration of AudioDevice using aggregate device
   AudioDevice alloAudio = AudioDevice("AlloAudio");
   alloAudio.print();
   app.player.rate(1.0 / alloAudio.channelsOutMax());
   app.configureAudio(alloAudio, 44100, 128, alloAudio.channelsOutMax(), 2);
+  */
 
   app.start();
 }
