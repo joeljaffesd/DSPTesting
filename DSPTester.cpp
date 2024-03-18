@@ -1,6 +1,10 @@
 #include "al/app/al_App.hpp"
+#include "al/graphics/al_Mesh.hpp"
 #include "al/system/al_Time.hpp"
 #include "al/app/al_GUIDomain.hpp"
+
+#include "al/math/al_Random.hpp"
+
 using namespace al;
 
 #include <iostream>
@@ -17,6 +21,33 @@ float ampTodB (float ampVal) {
   float dBVal = 20.f * log10f(abs(ampVal));
   return dBVal;
 }
+
+Vec3f randomVec3f(float scale) { // <- Function that returns a Vec2f containing random coords
+  return Vec3f(rnd::uniformS(), rnd::uniformS(), rnd::uniformS()) * scale;
+} 
+
+class ScopeBuffer {
+public:
+  // ScopeBuffer (int samplerate) {
+  //   sampleRate = samplerate;
+  // }
+
+  void writeSample (float sample) {
+    for (int i = 0; i < bufferSize - 1; i++) {
+      buffer[i] = buffer[i + 1];
+    }
+    buffer[bufferSize - 1] = sample;
+  }
+
+  float readSample (int index) {
+    return buffer[index];
+  }
+    
+protected:
+  int sampleRate;
+  static const int bufferSize = 44100;
+  float buffer[bufferSize];
+};
 
 class DelayLine {
 public:
@@ -44,6 +75,8 @@ struct DSPTester : public App {
   ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
   gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
   DelayLine delayLine;
+  ScopeBuffer scopeBuffer;
+  Mesh oscScope{Mesh::POINTS};
 
   void onInit() {
     // set up GUI
@@ -57,8 +90,19 @@ struct DSPTester : public App {
     //load file to player
     player.load("../Resources/HuckFinn.wav");
   }
-  void onCreate() {}
-  void onAnimate(double dt) {}
+
+  void onCreate() {
+    for (int i = 0; i < 44100; i++) {
+      oscScope.vertex((i / 44100.f) * 2 - 1, 0);
+    }
+  }
+
+  void onAnimate(double dt) {
+    for (int i = 0; i < 44100; i++) {
+      oscScope.vertices()[i][1] = scopeBuffer.readSample(i);
+    }
+  }
+
   bool onKeyDown(const Keyboard &k) override {
     if (k.key() == 'm') { // <- on m, muteToggle
       audioOutput = !audioOutput;
@@ -69,6 +113,9 @@ struct DSPTester : public App {
       player.reset();
       cout << "File Playback: " << filePlayback << endl; 
     }
+    if (k.key() == ' ') { // <- on space, print scopeBuffer.readSample(0)
+      cout << "scopeBuffer[0]: " << scopeBuffer.readSample(0) << endl;
+    }
     return true;
   }
 
@@ -77,28 +124,30 @@ struct DSPTester : public App {
     float bufferPower = 0;
     float volFactor = dBtoA(volControl);
     while(io()) { 
-    delayLine.pushSample(io.in(0));
-    if (filePlayback) {
-      for (int i = 0; i < io.channelsOut(); i++) {
-        if (i % 2 == 0) {
-          io.out(i) = player(0) * volFactor * audioOutput;
-        } else {
-          io.out(i) = player(1) * volFactor * audioOutput;
+      if (filePlayback) {
+        for (int channel = 0; channel < io.channelsOut(); channel++) {
+          if (channel % 2 == 0) {
+            io.out(channel) = player(0) * volFactor * audioOutput;
+          } else {
+            io.out(channel) = player(1) * volFactor * audioOutput;
+          }
+        }
+      } else {
+        for (int channel = 0; channel < io.channelsOut(); channel++) {
+          if (channel % 2 == 0) {
+            io.out(channel) = io.in(0) * volFactor * audioOutput;
+          } else {
+            io.out(channel) = io.in(1) * volFactor * audioOutput;
+          }
         }
       }
-    } else {
-      for (int i = 0; i < io.channelsOut(); i++) {
-        if (i % 2 == 0) {
-          io.out(i) = io.in(0) * volFactor * audioOutput;
-        } else {
-          io.out(i) = (io.in(1) + delayLine.popSample(44100)) * volFactor * audioOutput;
-        }
+
+      // audio analysis
+      for (int channel = 0; channel < io.channelsIn(); channel++){
+        bufferPower += powf(io.out(channel), 2);
       }
-    }
-    // audio analysis
-    for (int channel = 0; channel < io.channelsIn(); channel++){
-      bufferPower += powf(io.out(channel), 2);
-    }
+      //feed to oscilliscope
+      scopeBuffer.writeSample(io.out(0) + io.out(1));
     }
     bufferPower /= io.framesPerBuffer();
     rmsMeter = ampTodB(bufferPower);
@@ -106,6 +155,9 @@ struct DSPTester : public App {
 
   void onDraw(Graphics &g) {
     g.clear(0);
+    g.color(1);
+    g.camera(Viewpoint::IDENTITY); // Ortho [-1:1] x [-1:1]
+    g.draw(oscScope);
   }
 };
   
