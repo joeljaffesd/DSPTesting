@@ -2,9 +2,6 @@
 #include "al/graphics/al_Mesh.hpp"
 #include "al/system/al_Time.hpp"
 #include "al/app/al_GUIDomain.hpp"
-
-#include "al/math/al_Random.hpp"
-
 using namespace al;
 
 #include <iostream>
@@ -21,10 +18,6 @@ float ampTodB (float ampVal) {
   float dBVal = 20.f * log10f(abs(ampVal));
   return dBVal;
 }
-
-Vec3f randomVec3f(float scale) { // <- Function that returns a Vec2f containing random coords
-  return Vec3f(rnd::uniformS(), rnd::uniformS(), rnd::uniformS()) * scale;
-} 
 
 class ScopeBuffer {
 public:
@@ -47,6 +40,80 @@ protected:
   int sampleRate;
   static const int bufferSize = 44100;
   float buffer[bufferSize];
+};
+
+class Phasor {
+public:
+  void setSampleRate (int samplerate) {
+    sampleRate = samplerate;
+  }
+
+  void setFrequency (float freq) {
+    frequency = freq;
+    phaseIncrement = frequency / static_cast<float> (sampleRate);
+  }
+
+  virtual float processSample() {
+    phase += phaseIncrement;
+    phase = fmod(phase, 1.f);
+    return phase;
+  }
+
+protected:
+  float phase = 0;
+  int sampleRate = 44100;
+  float frequency = 1.f;
+  float phaseIncrement = frequency / static_cast<float>(sampleRate);
+};
+
+// ideal sawtooth wave, needs anti-aliasing filter
+class SawOsc : public Phasor {
+public:
+  float processSample() override {
+    phase += phaseIncrement;
+    phase = fmod(phase, 1.f);
+  return phase * 2.f - 1.f;
+  }
+};
+
+// ideal triangle wave, needs anti-aliasing filter
+class TriOsc : public Phasor {
+public:
+  float processSample() override {
+    phase += phaseIncrement;
+    phase = fmod(phase, 1.f);
+  return fabs(phase * 2.f - 1.f) * 2 - 1;
+  }
+};
+
+// sinOsc using 7th-order Taylor Series expansion
+class SinOsc : public Phasor {
+public: 
+  float processSample() override {
+    phase += phaseIncrement;
+    phase = fmod(phase, 1.f);
+   return taylor9Sin(phase * static_cast<float>(M_2PI)
+    - static_cast<float>(M_PI));
+  //  return sin(phase * static_cast<float>(M_2PI)
+  //   - static_cast<float>(M_PI));
+  }
+
+protected:
+  float taylor9Sin (float x) {
+  return x - (powf(x, 3.f) / factorial(3)) + (powf(x, 5.f) / 
+    factorial(5)) - (powf(x, 7.f) / factorial(7)) + 
+    (powf(x, 9.f) / factorial(9));
+  }
+
+  float factorial (int x) {
+    float output = 1;
+    int n = x;
+    while (n > 1) {
+      output *= n;
+      n -= 1;
+    }
+  return output;
+  }
 };
 
 class DelayLine {
@@ -74,9 +141,11 @@ struct DSPTester : public App {
   ParameterBool audioOutput{"audioOutput", "", false, 0.f, 1.f};
   ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
   gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
-  DelayLine delayLine;
+
   ScopeBuffer scopeBuffer;
-  Mesh oscScope{Mesh::POINTS};
+  Mesh oscScope{Mesh::LINE_STRIP};
+
+  SinOsc osc;
 
   void onInit() {
     // set up GUI
@@ -89,6 +158,7 @@ struct DSPTester : public App {
     
     //load file to player
     player.load("../Resources/HuckFinn.wav");
+    //osc.setFrequency(220.f);
   }
 
   void onCreate() {
@@ -113,9 +183,6 @@ struct DSPTester : public App {
       player.reset();
       cout << "File Playback: " << filePlayback << endl; 
     }
-    if (k.key() == ' ') { // <- on space, print scopeBuffer.readSample(0)
-      cout << "scopeBuffer[0]: " << scopeBuffer.readSample(0) << endl;
-    }
     return true;
   }
 
@@ -133,13 +200,14 @@ struct DSPTester : public App {
           }
         }
       } else {
-        for (int channel = 0; channel < io.channelsOut(); channel++) {
-          if (channel % 2 == 0) {
-            io.out(channel) = io.in(0) * volFactor * audioOutput;
-          } else {
-            io.out(channel) = io.in(1) * volFactor * audioOutput;
-          }
-        }
+        // for (int channel = 0; channel < io.channelsOut(); channel++) {
+        //   if (channel % 2 == 0) {
+        //     io.out(channel) = io.in(0) * volFactor * audioOutput;
+        //   } else {
+        //     io.out(channel) = io.in(1) * volFactor * audioOutput;
+        //   }
+        // }
+        io.out(0) = osc.processSample();
       }
 
       // audio analysis
@@ -147,7 +215,8 @@ struct DSPTester : public App {
         bufferPower += powf(io.out(channel), 2);
       }
       //feed to oscilliscope
-      scopeBuffer.writeSample(io.out(0) + io.out(1));
+      //scopeBuffer.writeSample(sinOsc.processSample());
+      scopeBuffer.writeSample(io.out(0));
     }
     bufferPower /= io.framesPerBuffer();
     rmsMeter = ampTodB(bufferPower);
@@ -166,8 +235,8 @@ int main() {
 
   // Allows for manual declaration of input and output devices, 
   // but causes unpredictable behavior. Needs investigation.
-  app.audioIO().deviceIn(AudioDevice("BlackHole 2ch"));
-  app.audioIO().deviceOut(AudioDevice("MacBook Pro Speakers"));
+  app.audioIO().deviceIn(AudioDevice("MacBook Pro Microphone"));
+  app.audioIO().deviceOut(AudioDevice("BlackHole 2ch"));
   cout << "outs: " << app.audioIO().channelsOutDevice() << endl;
   cout << "ins: " << app.audioIO().channelsInDevice() << endl;
   app.player.rate(1.0 / app.audioIO().channelsOutDevice());
