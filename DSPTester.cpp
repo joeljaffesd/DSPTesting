@@ -86,34 +86,41 @@ public:
   }
 };
 
-// sinOsc using 7th-order Taylor Series expansion
+// sinOsc using Nth-order Taylor Series expansion, N adjustable
+// as seen in Gamma https://github.com/LancePutnam/Gamma 
 class SinOsc : public Phasor {
 public: 
   float processSample() override {
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
-   return taylor9Sin(phase * static_cast<float>(M_2PI)
-    - static_cast<float>(M_PI));
-  //  return sin(phase * static_cast<float>(M_2PI)
-  //   - static_cast<float>(M_PI));
+   return taylorNSin(phase * static_cast<float>(M_2PI)
+    - static_cast<float>(M_PI), N);
   }
 
 protected:
-  float taylor9Sin (float x) {
-  return x - (powf(x, 3.f) / factorial(3)) + (powf(x, 5.f) / 
-    factorial(5)) - (powf(x, 7.f) / factorial(7)) + 
-    (powf(x, 9.f) / factorial(9));
-  }
-
-  float factorial (int x) {
-    float output = 1;
+  int factorial (int x) {
+    int output = 1;
     int n = x;
     while (n > 1) {
       output *= n;
       n -= 1;
     }
-  return output;
+    return output;
   }
+
+  float taylorNSin (float x, int order) {
+    float output = x;
+    int n = 3;
+    int sign = -1;
+    while (n <= order) {
+     output += sign * (powf(x, n) / factorial(n));
+      sign *= -1;
+      n += 2;
+    }
+    return output;
+  }
+
+  int N = 11; // 11 is good
 };
 
 class DelayLine {
@@ -208,6 +215,7 @@ struct DSPTester : public App {
         //   }
         // }
         io.out(0) = osc.processSample();
+        io.out(1) = io.out(0);
       }
 
       // audio analysis
@@ -216,7 +224,11 @@ struct DSPTester : public App {
       }
       //feed to oscilliscope
       //scopeBuffer.writeSample(sinOsc.processSample());
-      scopeBuffer.writeSample(io.out(0));
+      if (filePlayback) {
+        scopeBuffer.writeSample(io.out(0) + io.out(1) / 2.f);
+      } else {
+        scopeBuffer.writeSample(io.in(0));
+      }
     }
     bufferPower /= io.framesPerBuffer();
     rmsMeter = ampTodB(bufferPower);
@@ -236,7 +248,7 @@ int main() {
   // Allows for manual declaration of input and output devices, 
   // but causes unpredictable behavior. Needs investigation.
   app.audioIO().deviceIn(AudioDevice("MacBook Pro Microphone"));
-  app.audioIO().deviceOut(AudioDevice("BlackHole 2ch"));
+  app.audioIO().deviceOut(AudioDevice("MacBook Pro Speakers"));
   cout << "outs: " << app.audioIO().channelsOutDevice() << endl;
   cout << "ins: " << app.audioIO().channelsInDevice() << endl;
   app.player.rate(1.0 / app.audioIO().channelsOutDevice());
