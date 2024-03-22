@@ -122,7 +122,7 @@ protected:
       sign *= -1;
       n += 2;
     }
-    return output * 0.606f;
+    return output;
   }
 
   int N = 11; // 11 is good
@@ -148,10 +148,13 @@ public:
 
   float processSample() {
     float output = 0;
+    float poop = 0;
     for (int i = 0; i < numVoices; i++) {
-      output += oscBank[i].processSample() * (1.f / powf((i + 1), 2));
+      float harmPower = 1.f / powf((i + 1), 2);
+      output += oscBank[i].processSample() * harmPower;
+      poop += harmPower;
     }
-    return output * 1.6; // <- should scale as a function of numVoices
+    return output * (1.f / poop); // <- should scale as a function of numVoices
   }
 
 protected:
@@ -170,7 +173,7 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer;
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  JoelPolySynth osc{5, static_cast<int>(AudioIO().framesPerSecond())};
+  JoelPolySynth osc{100, static_cast<int>(AudioIO().framesPerSecond())};
 
   void onInit() {
     // set up GUI
@@ -184,7 +187,7 @@ struct DSPTester : public App {
     //load file to player
     player.load("../Resources/HuckFinn.wav");
     osc.prepare();
-    osc.setFrequency(1.f);
+    osc.setFrequency(41.f);
   }
 
   void onCreate() {
