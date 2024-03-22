@@ -44,6 +44,8 @@ protected:
 
 class Phasor {
 public:
+  Phasor (int samplerate) : sampleRate(samplerate) {}
+
   void setSampleRate (int samplerate) {
     sampleRate = samplerate;
   }
@@ -90,6 +92,9 @@ public:
 // as seen in Gamma https://github.com/LancePutnam/Gamma 
 class SinOsc : public Phasor {
 public: 
+  SinOsc (int samplerate, int taylorOrder) : 
+  Phasor(samplerate), N(taylorOrder) {}
+
   float processSample() override {
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
@@ -117,29 +122,42 @@ protected:
       sign *= -1;
       n += 2;
     }
-    return output;
+    return output * 0.606f;
   }
 
   int N = 11; // 11 is good
 };
 
-class DelayLine {
+class JoelPolySynth {
 public:
-  void pushSample (float sample) {
-    buffer[writeIndex] = sample;
-    writeIndex = (writeIndex + 1) % bufferSize;
+  JoelPolySynth (int voices, int samplerate) : 
+  numVoices(voices), sampleRate(samplerate) {}
+
+  void prepare () {
+    oscBank.clear();
+    for (int i = 0; i < numVoices; i++) {
+      oscBank.push_back(SinOsc (sampleRate, 11));
+    }
   }
 
-  float popSample (int delayTimeInSamples) {
-    readIndex = (writeIndex - delayTimeInSamples + bufferSize) % bufferSize;
-    return buffer[readIndex];
+  void setFrequency(float frequency) {
+    for (int i = 0; i < numVoices; i++) {
+      oscBank[i].setFrequency((i + 1) * frequency); 
+    }
   }
 
-private:
-  static const int bufferSize = 96000;
-  float buffer[bufferSize];
-  int readIndex;
-  int writeIndex;
+  float processSample() {
+    float output = 0;
+    for (int i = 0; i < numVoices; i++) {
+      output += oscBank[i].processSample() * (1.f / powf((i + 1), 2));
+    }
+    return output * 1.6; // <- should scale as a function of numVoices
+  }
+
+protected:
+  int numVoices;
+  int sampleRate;
+  std::vector<SinOsc> oscBank;
 };
 
 struct DSPTester : public App {
@@ -152,7 +170,7 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer;
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  SinOsc osc;
+  JoelPolySynth osc{5, static_cast<int>(AudioIO().framesPerSecond())};
 
   void onInit() {
     // set up GUI
@@ -165,7 +183,8 @@ struct DSPTester : public App {
     
     //load file to player
     player.load("../Resources/HuckFinn.wav");
-    //osc.setFrequency(220.f);
+    osc.prepare();
+    osc.setFrequency(1.f);
   }
 
   void onCreate() {
@@ -207,27 +226,25 @@ struct DSPTester : public App {
           }
         }
       } else {
-        // for (int channel = 0; channel < io.channelsOut(); channel++) {
-        //   if (channel % 2 == 0) {
-        //     io.out(channel) = io.in(0) * volFactor * audioOutput;
-        //   } else {
-        //     io.out(channel) = io.in(1) * volFactor * audioOutput;
-        //   }
-        // }
-        io.out(0) = osc.processSample();
+        io.out(0) = osc.processSample() * volFactor * audioOutput;
         io.out(1) = io.out(0);
       }
 
-      // audio analysis
+      // feed to oscilliscope
+      if (filePlayback) {
+        scopeBuffer.writeSample((io.out(0) + io.out(1)));
+      } else {
+        //scopeBuffer.writeSample((io.out(0) + io.out(1)));
+        scopeBuffer.writeSample((io.out(0) + io.out(1)) * 0.5f);
+      }
+
+      // feed to analysis buffer
       for (int channel = 0; channel < io.channelsIn(); channel++){
         bufferPower += powf(io.out(channel), 2);
       }
-      //feed to oscilliscope
-      //scopeBuffer.writeSample(sinOsc.processSample());
-      if (filePlayback) {
-        scopeBuffer.writeSample(io.out(0) + io.out(1) / 2.f);
-      } else {
-        scopeBuffer.writeSample(io.in(0));
+      // overload detector
+      if (io.out(0) > 1.f || io.out(1) > 1.f) {
+        cout << "CLIP!" << endl;
       }
     }
     bufferPower /= io.framesPerBuffer();
