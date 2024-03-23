@@ -22,9 +22,7 @@ float ampTodB (float ampVal) {
 
 class ScopeBuffer {
 public:
-  // ScopeBuffer (int samplerate) {
-  //   sampleRate = samplerate;
-  // }
+  ScopeBuffer (int samprate) : sampleRate(samprate) {}
 
   void writeSample (float sample) {
     for (int i = 0; i < bufferSize - 1; i++) {
@@ -39,7 +37,7 @@ public:
     
 protected:
   int sampleRate;
-  static const int bufferSize = 44100;
+  static const int bufferSize = 44100; // <- set equal to samplerate
   float buffer[bufferSize];
 };
 
@@ -66,7 +64,7 @@ public:
   float getPhase () {return phase;}
 
 protected:
-  float phase = rnd::uniformS();
+  float phase = rnd::uniform();
   //float phase = 0.f;
   int sampleRate = 44100;
   float frequency = 1.f;
@@ -174,7 +172,7 @@ struct DSPTester : public App {
   ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
   gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
 
-  ScopeBuffer scopeBuffer;
+  ScopeBuffer scopeBuffer{static_cast<int>(AudioIO().framesPerSecond())};
   Mesh oscScope{Mesh::LINE_STRIP};
 
   //JoelPolySynth osc{2, static_cast<int>(AudioIO().framesPerSecond())};
@@ -193,10 +191,10 @@ struct DSPTester : public App {
     player.load("../Resources/HuckFinn.wav");
     //osc.prepare();
     osc3.setFrequency(1.f);
-    osc3.setPhase(0.f);
+    //osc3.setPhase(0.f);
     cout << "Phase 1: " << osc3.getPhase() << endl;
     osc4.setFrequency(2.f);
-    osc4.setPhase(0.f);
+    osc4.setPhase(osc3.getPhase() + 0.25f);
     cout << "Phase 2: " << osc4.getPhase() << endl;
   }
 
