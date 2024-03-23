@@ -2,6 +2,7 @@
 #include "al/graphics/al_Mesh.hpp"
 #include "al/system/al_Time.hpp"
 #include "al/app/al_GUIDomain.hpp"
+#include "al/math/al_Random.hpp"
 using namespace al;
 
 #include <iostream>
@@ -44,10 +45,10 @@ protected:
 
 class Phasor {
 public:
-  Phasor (int samplerate) : sampleRate(samplerate) {}
+  Phasor (int samprate) : sampleRate(samprate) {}
 
-  void setSampleRate (int samplerate) {
-    sampleRate = samplerate;
+  void setSampleRate (int samprate) {
+    sampleRate = samprate;
   }
 
   void setFrequency (float freq) {
@@ -61,8 +62,12 @@ public:
     return phase;
   }
 
+  float setPhase (float ph) {phase = ph;}
+  float getPhase () {return phase;}
+
 protected:
-  float phase = 0;
+  float phase = rnd::uniformS();
+  //float phase = 0.f;
   int sampleRate = 44100;
   float frequency = 1.f;
   float phaseIncrement = frequency / static_cast<float>(sampleRate);
@@ -92,8 +97,8 @@ public:
 // as seen in Gamma https://github.com/LancePutnam/Gamma 
 class SinOsc : public Phasor {
 public: 
-  SinOsc (int samplerate, int taylorOrder) : 
-  Phasor(samplerate), N(taylorOrder) {}
+  SinOsc (int samprate, int taylorOrder) : 
+  Phasor(samprate), N(taylorOrder) {}
 
   float processSample() override {
     phase += phaseIncrement;
@@ -130,31 +135,30 @@ protected:
 
 class JoelPolySynth {
 public:
-  JoelPolySynth (int voices, int samplerate) : 
-  numVoices(voices), sampleRate(samplerate) {}
+  JoelPolySynth (int voices, int samprate) : 
+  numVoices(voices), sampleRate(samprate) {}
 
   void prepare () {
-    oscBank.clear();
     for (int i = 0; i < numVoices; i++) {
       oscBank.push_back(SinOsc (sampleRate, 11));
     }
   }
 
-  void setFrequency(float frequency) {
+  void setFrequency(float freq) {
     for (int i = 0; i < numVoices; i++) {
-      oscBank[i].setFrequency((i + 1) * frequency); 
+      oscBank[i].setFrequency((i + 1) * freq); 
     }
   }
 
   float processSample() {
     float output = 0;
-    float poop = 0;
+    float gain = 0;
     for (int i = 0; i < numVoices; i++) {
       float harmPower = 1.f / powf((i + 1), 2);
       output += oscBank[i].processSample() * harmPower;
-      poop += harmPower;
+      gain += harmPower;
     }
-    return output * (1.f / poop); // <- should scale as a function of numVoices
+    return output * (1 / gain); // <- should scale as a function of numVoices
   }
 
 protected:
@@ -173,8 +177,9 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer;
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  JoelPolySynth osc{100, static_cast<int>(AudioIO().framesPerSecond())};
-
+  //JoelPolySynth osc{2, static_cast<int>(AudioIO().framesPerSecond())};
+  SinOsc osc3{static_cast<int>(AudioIO().framesPerSecond()), 11};
+  SinOsc osc4{static_cast<int>(AudioIO().framesPerSecond()), 11};
   void onInit() {
     // set up GUI
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
@@ -186,8 +191,13 @@ struct DSPTester : public App {
     
     //load file to player
     player.load("../Resources/HuckFinn.wav");
-    osc.prepare();
-    osc.setFrequency(41.f);
+    //osc.prepare();
+    osc3.setFrequency(1.f);
+    osc3.setPhase(0.f);
+    cout << "Phase 1: " << osc3.getPhase() << endl;
+    osc4.setFrequency(2.f);
+    osc4.setPhase(0.f);
+    cout << "Phase 2: " << osc4.getPhase() << endl;
   }
 
   void onCreate() {
@@ -229,8 +239,8 @@ struct DSPTester : public App {
           }
         }
       } else {
-        io.out(0) = osc.processSample() * volFactor * audioOutput;
-        io.out(1) = io.out(0);
+        io.out(0) = osc3.processSample() * volFactor * audioOutput;
+        io.out(1) = osc4.processSample() * volFactor * audioOutput;
       }
 
       // feed to oscilliscope
