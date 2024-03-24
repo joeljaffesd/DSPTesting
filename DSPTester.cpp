@@ -41,54 +41,36 @@ protected:
   float buffer[bufferSize];
 };
 
+
 class Phasor {
 public:
   Phasor (int samprate) : sampleRate(samprate) {}
 
-  void setSampleRate (int samprate) {
+  virtual void setSampleRate (int samprate) {
     sampleRate = samprate;
+    phaseIncrement = frequency / static_cast<float> (sampleRate);
   }
 
-  void setFrequency (float freq) {
+  virtual void setFrequency (float freq) {
     frequency = freq;
     phaseIncrement = frequency / static_cast<float> (sampleRate);
   }
 
   virtual float processSample() {
+    float phaseIncrement = frequency / static_cast<float>(sampleRate);
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
     return phase;
   }
 
-  float setPhase (float ph) {phase = ph;}
-  float getPhase () {return phase;}
+  virtual float setPhase (float ph) {phase = ph;}
+  virtual float getPhase () {return phase;}
 
 protected:
-  float phase = rnd::uniform();
-  //float phase = 0.f;
+  float phase = 0.f;
   int sampleRate = 44100;
   float frequency = 1.f;
   float phaseIncrement = frequency / static_cast<float>(sampleRate);
-};
-
-// ideal sawtooth wave, needs anti-aliasing filter
-class SawOsc : public Phasor {
-public:
-  float processSample() override {
-    phase += phaseIncrement;
-    phase = fmod(phase, 1.f);
-  return phase * 2.f - 1.f;
-  }
-};
-
-// ideal triangle wave, needs anti-aliasing filter
-class TriOsc : public Phasor {
-public:
-  float processSample() override {
-    phase += phaseIncrement;
-    phase = fmod(phase, 1.f);
-  return fabs(phase * 2.f - 1.f) * 2 - 1;
-  }
 };
 
 // sinOsc using Nth-order Taylor Series expansion, N adjustable
@@ -131,9 +113,9 @@ protected:
   int N = 11; // 11 is good
 };
 
-class JoelPolySynth {
+class PolySineSynth {
 public:
-  JoelPolySynth (int voices, int samprate) : 
+  PolySineSynth (int voices, int samprate) : 
   numVoices(voices), sampleRate(samprate) {}
 
   void prepare () {
@@ -176,8 +158,8 @@ struct DSPTester : public App {
   Mesh oscScope{Mesh::LINE_STRIP};
 
   //JoelPolySynth osc{2, static_cast<int>(AudioIO().framesPerSecond())};
-  SinOsc osc3{static_cast<int>(AudioIO().framesPerSecond()), 11};
-  SinOsc osc4{static_cast<int>(AudioIO().framesPerSecond()), 11};
+  Phasor osc3{static_cast<int>(AudioIO().framesPerSecond())};
+  Phasor osc4{static_cast<int>(AudioIO().framesPerSecond())};
   void onInit() {
     // set up GUI
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
@@ -192,10 +174,10 @@ struct DSPTester : public App {
     //osc.prepare();
     osc3.setFrequency(1.f);
     //osc3.setPhase(0.f);
-    cout << "Phase 1: " << osc3.getPhase() << endl;
+    //cout << "Phase 1: " << osc3.getPhase() << endl;
     osc4.setFrequency(2.f);
-    osc4.setPhase(osc3.getPhase() + 0.25f);
-    cout << "Phase 2: " << osc4.getPhase() << endl;
+    //osc4.setPhase(osc3.getPhase());
+    //cout << "Phase 2: " << osc4.getPhase() << endl;
   }
 
   void onCreate() {
@@ -227,6 +209,7 @@ struct DSPTester : public App {
     // audio throughput
     float bufferPower = 0;
     float volFactor = dBtoA(volControl);
+    float last = 0.f;
     while(io()) { 
       if (filePlayback) {
         for (int channel = 0; channel < io.channelsOut(); channel++) {
@@ -238,6 +221,10 @@ struct DSPTester : public App {
         }
       } else {
         io.out(0) = osc3.processSample() * volFactor * audioOutput;
+        float diff = io.out(0) - last;
+        if (diff <= 0) {osc4.setPhase(osc3.getPhase());}
+        //osc3.setPhase(0.f); 
+        last = io.out(0);
         io.out(1) = osc4.processSample() * volFactor * audioOutput;
       }
 
