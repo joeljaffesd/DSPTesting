@@ -113,6 +113,48 @@ protected:
   int N = 11; // 11 is good
 };
 
+class PolyphonyEngine {
+public:
+  PolyphonyEngine (int voices, int samprate) : 
+  numVoices(voices), sampleRate(samprate) {}
+
+  void prepare () {
+    for (int i = 0; i < numVoices; i++) {
+      oscBank.push_back(Phasor (sampleRate));
+    }
+  }
+
+  void setFrequency(float freq) {
+    for (int i = 0; i < numVoices; i++) {
+      oscBank[i].setFrequency((i + 1) * freq); 
+    }
+  }
+
+  float processSample() {
+    float output = 0;
+    for (int i = 0; i < numVoices; i++) {
+      output += oscBank[i].processSample();
+      if (i == 0) {
+        float diff = oscBank[i].getPhase() - last;
+        if (diff < 0) {
+          for (int j = 1; j < numVoices; j++) {
+            oscBank[j].setPhase(oscBank[i].getPhase());
+          }  
+        }
+      last = oscBank[i].getPhase();
+      }
+    }
+    return output * (1.f / numVoices); // <- should scale as a function of numVoices
+  }
+
+protected:
+  int type;
+  int numVoices;
+  int sampleRate;
+  float last;
+  std::vector<Phasor> oscBank;
+};
+
 class PolySineSynth {
 public:
   PolySineSynth (int voices, int samprate) : 
@@ -136,6 +178,15 @@ public:
     for (int i = 0; i < numVoices; i++) {
       float harmPower = 1.f / powf((i + 1), 2);
       output += oscBank[i].processSample() * harmPower;
+      if (i == 0) {
+        float diff = last - oscBank[0].getPhase();
+        if (diff < 0) {
+          for (int j = 1; j < numVoices; j++) {
+            oscBank[i].setPhase(0.f);
+          }
+        float last = oscBank[0].getPhase();
+        }
+      }
       gain += harmPower;
     }
     return output * (1 / gain); // <- should scale as a function of numVoices
@@ -144,6 +195,7 @@ public:
 protected:
   int numVoices;
   int sampleRate;
+  float last;
   std::vector<SinOsc> oscBank;
 };
 
@@ -157,9 +209,7 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer{static_cast<int>(AudioIO().framesPerSecond())};
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  //JoelPolySynth osc{2, static_cast<int>(AudioIO().framesPerSecond())};
-  Phasor osc3{static_cast<int>(AudioIO().framesPerSecond())};
-  Phasor osc4{static_cast<int>(AudioIO().framesPerSecond())};
+  PolyphonyEngine osc{2, static_cast<int>(AudioIO().framesPerSecond())};
   void onInit() {
     // set up GUI
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
@@ -171,13 +221,8 @@ struct DSPTester : public App {
     
     //load file to player
     player.load("../Resources/HuckFinn.wav");
-    //osc.prepare();
-    osc3.setFrequency(1.f);
-    //osc3.setPhase(0.f);
-    //cout << "Phase 1: " << osc3.getPhase() << endl;
-    osc4.setFrequency(2.f);
-    //osc4.setPhase(osc3.getPhase());
-    //cout << "Phase 2: " << osc4.getPhase() << endl;
+    osc.prepare();
+    osc.setFrequency(1.f);
   }
 
   void onCreate() {
@@ -209,7 +254,6 @@ struct DSPTester : public App {
     // audio throughput
     float bufferPower = 0;
     float volFactor = dBtoA(volControl);
-    float last = 0.f;
     while(io()) { 
       if (filePlayback) {
         for (int channel = 0; channel < io.channelsOut(); channel++) {
@@ -220,12 +264,7 @@ struct DSPTester : public App {
           }
         }
       } else {
-        io.out(0) = osc3.processSample() * volFactor * audioOutput;
-        float diff = io.out(0) - last;
-        if (diff <= 0) {osc4.setPhase(osc3.getPhase());}
-        //osc3.setPhase(0.f); 
-        last = io.out(0);
-        io.out(1) = osc4.processSample() * volFactor * audioOutput;
+        io.out(0) = osc.processSample() * volFactor * audioOutput;
       }
 
       // feed to oscilliscope
@@ -233,7 +272,7 @@ struct DSPTester : public App {
         scopeBuffer.writeSample((io.out(0) + io.out(1)));
       } else {
         //scopeBuffer.writeSample((io.out(0) + io.out(1)));
-        scopeBuffer.writeSample((io.out(0) + io.out(1)) * 0.5f);
+        scopeBuffer.writeSample(io.out(0));
       }
 
       // feed to analysis buffer
