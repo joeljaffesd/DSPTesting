@@ -77,17 +77,22 @@ protected:
 // as seen in Gamma https://github.com/LancePutnam/Gamma 
 class SinOsc : public Phasor {
 public: 
-  SinOsc (int samprate, int taylorOrder) : 
-  Phasor(samprate), N(taylorOrder) {}
+  SinOsc (int samprate) : 
+  Phasor(samprate) {}
 
   float processSample() override {
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
-   return taylorNSin(phase * static_cast<float>(M_2PI)
-    - static_cast<float>(M_PI), N);
+   return taylorNSin(phase * nTwoPi
+    + pi, N);
   }
 
+  float setOrder (int order) {N = order;}
+
 protected:
+  int N = 11; // 11 is good
+  const float pi = static_cast<float>(M_PI);
+  const float nTwoPi = -2.f * pi;
   int factorial (int x) {
     int output = 1;
     int n = x;
@@ -109,10 +114,9 @@ protected:
     }
     return output;
   }
-
-  int N = 11; // 11 is good
 };
 
+template<typename T>
 class PolyphonyEngine {
 public:
   PolyphonyEngine (int voices, int samprate) : 
@@ -120,13 +124,14 @@ public:
 
   void prepare () {
     for (int i = 0; i < numVoices; i++) {
-      oscBank.push_back(Phasor (sampleRate));
+      oscBank.push_back(T (sampleRate));
     }
   }
 
   void setFrequency(float freq) {
     for (int i = 0; i < numVoices; i++) {
-      oscBank[i].setFrequency((i + 1) * freq); 
+      oscBank[i].setFrequency((i + 1) * freq);
+      //if (i != 0) {oscBank[i].setPhase(0.25f);} // phase offset only needed for SinOsc...
     }
   }
 
@@ -139,6 +144,7 @@ public:
         if (diff < 0) {
           for (int j = 1; j < numVoices; j++) {
             oscBank[j].setPhase(oscBank[i].getPhase());
+            //oscBank[j].setPhase(oscBank[i].getPhase() + 0.25f); // phase offset only needed for SinOsc...
           }  
         }
       last = oscBank[i].getPhase();
@@ -152,52 +158,52 @@ protected:
   int numVoices;
   int sampleRate;
   float last;
-  std::vector<Phasor> oscBank;
+  std::vector<T> oscBank;
 };
 
-class PolySineSynth {
-public:
-  PolySineSynth (int voices, int samprate) : 
-  numVoices(voices), sampleRate(samprate) {}
+// class PolySineSynth {
+// public:
+//   PolySineSynth (int voices, int samprate) : 
+//   numVoices(voices), sampleRate(samprate) {}
 
-  void prepare () {
-    for (int i = 0; i < numVoices; i++) {
-      oscBank.push_back(SinOsc (sampleRate, 11));
-    }
-  }
+//   void prepare () {
+//     for (int i = 0; i < numVoices; i++) {
+//       oscBank.push_back(SinOsc (sampleRate));
+//     }
+//   }
 
-  void setFrequency(float freq) {
-    for (int i = 0; i < numVoices; i++) {
-      oscBank[i].setFrequency((i + 1) * freq); 
-    }
-  }
+//   void setFrequency(float freq) {
+//     for (int i = 0; i < numVoices; i++) {
+//       oscBank[i].setFrequency((i + 1) * freq); 
+//     }
+//   }
 
-  float processSample() {
-    float output = 0;
-    float gain = 0;
-    for (int i = 0; i < numVoices; i++) {
-      float harmPower = 1.f / powf((i + 1), 2);
-      output += oscBank[i].processSample() * harmPower;
-      if (i == 0) {
-        float diff = last - oscBank[0].getPhase();
-        if (diff < 0) {
-          for (int j = 1; j < numVoices; j++) {
-            oscBank[i].setPhase(0.f);
-          }
-        float last = oscBank[0].getPhase();
-        }
-      }
-      gain += harmPower;
-    }
-    return output * (1 / gain); // <- should scale as a function of numVoices
-  }
+//   float processSample() {
+//     float output = 0;
+//     float gain = 0;
+//     for (int i = 0; i < numVoices; i++) {
+//       float harmPower = 1.f / powf((i + 1), 2);
+//       output += oscBank[i].processSample() * harmPower;
+//       if (i == 0) {
+//         float diff = last - oscBank[0].getPhase();
+//         if (diff < 0) {
+//           for (int j = 1; j < numVoices; j++) {
+//             oscBank[i].setPhase(0.f);
+//           }
+//         float last = oscBank[0].getPhase();
+//         }
+//       }
+//       gain += harmPower;
+//     }
+//     return output * (1 / gain); // <- should scale as a function of numVoices
+//   }
 
-protected:
-  int numVoices;
-  int sampleRate;
-  float last;
-  std::vector<SinOsc> oscBank;
-};
+// protected:
+//   int numVoices;
+//   int sampleRate;
+//   float last;
+//   std::vector<SinOsc> oscBank;
+// };
 
 struct DSPTester : public App {
   Parameter volControl{"volControl", "", 0.f, -96.f, 6.f};
@@ -209,7 +215,7 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer{static_cast<int>(AudioIO().framesPerSecond())};
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  PolyphonyEngine osc{2, static_cast<int>(AudioIO().framesPerSecond())};
+  PolyphonyEngine<SinOsc> osc{2, static_cast<int>(AudioIO().framesPerSecond())};
   void onInit() {
     // set up GUI
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
