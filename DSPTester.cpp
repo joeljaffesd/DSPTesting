@@ -84,9 +84,8 @@ public:
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
    return taylorNSin(
-    (phase 
-    //+ fmod((frequency-1.f) * -0.25f, 0.5f) // getting closer... 
-   )* nTwoPi + pi, 
+    fmod(phase + (0.2f*(frequency-1.f)), 1.f) // closer...
+    * nTwoPi + pi, 
    N);
   }
 
@@ -146,7 +145,7 @@ public:
         float diff = oscBank[i].getPhase() - last;
         if (diff < 0) {
           for (int j = 1; j < numVoices; j++) {
-            oscBank[j].setPhase(0.f);
+            oscBank[j].setPhase(oscBank[i].getPhase());
           }  
         }
       last = oscBank[i].getPhase();
@@ -217,7 +216,7 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer{static_cast<int>(AudioIO().framesPerSecond())};
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  PolyphonyEngine<SinOsc> osc{3, static_cast<int>(AudioIO().framesPerSecond())};
+  PolyphonyEngine<SinOsc> osc{5, static_cast<int>(AudioIO().framesPerSecond())};
   void onInit() {
     // set up GUI
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
@@ -273,6 +272,7 @@ struct DSPTester : public App {
         }
       } else {
         io.out(0) = osc.processSample() * volFactor * audioOutput;
+        io.out(1) = io.out(0);
       }
 
       // feed to oscilliscope
