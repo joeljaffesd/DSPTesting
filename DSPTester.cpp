@@ -84,8 +84,8 @@ public:
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
    return taylorNSin(
-    fmod(phase + (0.2f*(frequency-1.f)), 1.f) // closer...
-    * nTwoPi + pi, 
+    fmod(phase + (0.25f*(frequency-1.f)), 1.f) // closer...
+    * twoPi - pi, 
    N);
   }
 
