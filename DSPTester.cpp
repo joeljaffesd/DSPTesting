@@ -83,8 +83,11 @@ public:
   float processSample() override {
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
-   return taylorNSin(phase * nTwoPi
-    + pi, N);
+   return taylorNSin(
+    (phase 
+    //+ fmod((frequency-1.f) * -0.25f, 0.5f) // getting closer... 
+   )* nTwoPi + pi, 
+   N);
   }
 
   float setOrder (int order) {N = order;}
@@ -92,7 +95,8 @@ public:
 protected:
   int N = 11; // 11 is good
   const float pi = static_cast<float>(M_PI);
-  const float nTwoPi = -2.f * pi;
+  const float twoPi = 2.f * pi;
+  const float nTwoPi = -1.f * twoPi;
   int factorial (int x) {
     int output = 1;
     int n = x;
@@ -131,7 +135,6 @@ public:
   void setFrequency(float freq) {
     for (int i = 0; i < numVoices; i++) {
       oscBank[i].setFrequency((i + 1) * freq);
-      //if (i != 0) {oscBank[i].setPhase(0.25f);} // phase offset only needed for SinOsc...
     }
   }
 
@@ -143,8 +146,7 @@ public:
         float diff = oscBank[i].getPhase() - last;
         if (diff < 0) {
           for (int j = 1; j < numVoices; j++) {
-            oscBank[j].setPhase(oscBank[i].getPhase());
-            //oscBank[j].setPhase(oscBank[i].getPhase() + 0.25f); // phase offset only needed for SinOsc...
+            oscBank[j].setPhase(0.f);
           }  
         }
       last = oscBank[i].getPhase();
@@ -215,7 +217,7 @@ struct DSPTester : public App {
   ScopeBuffer scopeBuffer{static_cast<int>(AudioIO().framesPerSecond())};
   Mesh oscScope{Mesh::LINE_STRIP};
 
-  PolyphonyEngine<SinOsc> osc{2, static_cast<int>(AudioIO().framesPerSecond())};
+  PolyphonyEngine<SinOsc> osc{3, static_cast<int>(AudioIO().framesPerSecond())};
   void onInit() {
     // set up GUI
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
