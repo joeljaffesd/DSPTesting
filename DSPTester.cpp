@@ -84,7 +84,7 @@ public:
     phase += phaseIncrement;
     phase = fmod(phase, 1.f);
    return taylorNSin(
-    fmod(phase + (0.25f*(frequency-1.f)), 1.f) // closer...
+    fmod(phase + (0.25f*(frequency-1.f)), 1.f) 
     * twoPi - pi, 
    N);
   }
@@ -209,6 +209,7 @@ protected:
 struct DSPTester : public App {
   Parameter volControl{"volControl", "", 0.f, -96.f, 6.f};
   Parameter rmsMeter{"rmsMeter", "", -96.f, -96.f, 0.f};
+  ParameterInt midiNote{"midiNote","", 1, 0, 127};
   ParameterBool audioOutput{"audioOutput", "", false, 0.f, 1.f};
   ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
   gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
@@ -222,12 +223,15 @@ struct DSPTester : public App {
     auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
     auto &gui = GUIdomain->newGUI();
     gui.add(volControl); // add parameter to GUI
-    gui.add(rmsMeter); // add parameter to GUI
-    gui.add(audioOutput); // add parameter to GUI
-    gui.add(filePlayback); // add parameter to GUI
+    gui.add(rmsMeter);
+    gui.add(audioOutput); 
+    gui.add(filePlayback); 
+    gui.add(midiNote);
     
     //load file to player
     player.load("../Resources/HuckFinn.wav");
+
+    //prepare osc
     osc.prepare();
     osc.setFrequency(1.f);
   }
@@ -242,6 +246,7 @@ struct DSPTester : public App {
     for (int i = 0; i < 44100; i++) {
       oscScope.vertices()[i][1] = scopeBuffer.readSample(i);
     }
+    osc.setFrequency(midiNote); // <- optimzie with if(changed) architecture
   }
 
   bool onKeyDown(const Keyboard &k) override {
