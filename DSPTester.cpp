@@ -10,15 +10,10 @@ using namespace std;
 
 #include "Gamma/SamplePlayer.h"
 
-float dBtoA (float dBVal) {
-  float ampVal = pow(10.f, dBVal / 20.f);
-  return ampVal;
-}
-
-float ampTodB (float ampVal) {
-  float dBVal = 20.f * log10f(abs(ampVal));
-  return dBVal;
-}
+float dBtoA (float dBVal) {return powf(10.f, dBVal / 20.f);}
+float ampTodB (float ampVal) {return 20.f * log10f(fabs(ampVal));}
+float mToF (int midiVal) {return 440.f * powf(2.f, (midiVal - 69) / 12.f);}
+int fToM (float freq) {return 12.f * log2f(freq / 440.f) + 69;}
 
 class ScopeBuffer {
 public:
@@ -138,7 +133,7 @@ public:
   }
 
   float processSample() {
-    float output = 0;
+    float output = 0.f;
     for (int i = 0; i < numVoices; i++) {
       output += oscBank[i].processSample();
       if (i == 0) {
@@ -162,54 +157,10 @@ protected:
   std::vector<T> oscBank;
 };
 
-// class PolySineSynth {
-// public:
-//   PolySineSynth (int voices, int samprate) : 
-//   numVoices(voices), sampleRate(samprate) {}
-
-//   void prepare () {
-//     for (int i = 0; i < numVoices; i++) {
-//       oscBank.push_back(SinOsc (sampleRate));
-//     }
-//   }
-
-//   void setFrequency(float freq) {
-//     for (int i = 0; i < numVoices; i++) {
-//       oscBank[i].setFrequency((i + 1) * freq); 
-//     }
-//   }
-
-//   float processSample() {
-//     float output = 0;
-//     float gain = 0;
-//     for (int i = 0; i < numVoices; i++) {
-//       float harmPower = 1.f / powf((i + 1), 2);
-//       output += oscBank[i].processSample() * harmPower;
-//       if (i == 0) {
-//         float diff = last - oscBank[0].getPhase();
-//         if (diff < 0) {
-//           for (int j = 1; j < numVoices; j++) {
-//             oscBank[i].setPhase(0.f);
-//           }
-//         float last = oscBank[0].getPhase();
-//         }
-//       }
-//       gain += harmPower;
-//     }
-//     return output * (1 / gain); // <- should scale as a function of numVoices
-//   }
-
-// protected:
-//   int numVoices;
-//   int sampleRate;
-//   float last;
-//   std::vector<SinOsc> oscBank;
-// };
-
 struct DSPTester : public App {
   Parameter volControl{"volControl", "", 0.f, -96.f, 6.f};
   Parameter rmsMeter{"rmsMeter", "", -96.f, -96.f, 0.f};
-  ParameterInt midiNote{"midiNote","", 1, 0, 127};
+  ParameterInt oscFreq{"oscFreq","", 1, 0, 127};
   ParameterBool audioOutput{"audioOutput", "", false, 0.f, 1.f};
   ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
   gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
@@ -226,7 +177,7 @@ struct DSPTester : public App {
     gui.add(rmsMeter);
     gui.add(audioOutput); 
     gui.add(filePlayback); 
-    gui.add(midiNote);
+    gui.add(oscFreq);
     
     //load file to player
     player.load("../Resources/HuckFinn.wav");
@@ -246,7 +197,7 @@ struct DSPTester : public App {
     for (int i = 0; i < 44100; i++) {
       oscScope.vertices()[i][1] = scopeBuffer.readSample(i);
     }
-    osc.setFrequency(midiNote); // <- optimzie with if(changed) architecture
+    osc.setFrequency(oscFreq); // <- optimzie with if(changed) architecture
   }
 
   bool onKeyDown(const Keyboard &k) override {

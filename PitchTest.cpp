@@ -1,0 +1,346 @@
+#include "al/app/al_App.hpp"
+#include "al/graphics/al_Mesh.hpp"
+#include "al/app/al_GUIDomain.hpp"
+using namespace al;
+
+#include <iostream>
+using namespace std;
+
+#include "Gamma/SamplePlayer.h"
+
+float dBtoA (float dBVal) {return powf(10.f, dBVal / 20.f);}
+float ampTodB (float ampVal) {return 20.f * log10f(fabs(ampVal));}
+float mToF (int midiVal) {return 440.f * powf(2.f, (midiVal - 69) / 12.f);}
+int fToM (float freq) {return 12.f * log2f(freq / 440.f) + 69;}
+
+class ScopeBuffer {
+public:
+  ScopeBuffer (int samprate) : sampleRate(samprate) {}
+
+  void writeSample (float sample) {
+    for (int i = 0; i < bufferSize - 1; i++) {
+      buffer[i] = buffer[i + 1];
+    }
+    buffer[bufferSize - 1] = sample;
+  }
+
+  float readSample (int index) {
+    return buffer[index];
+  }
+    
+protected:
+  int sampleRate;
+  static const int bufferSize = 44100; // <- set equal to samplerate
+  float buffer[bufferSize];
+};
+
+
+class Phasor {
+public:
+  Phasor (int samprate) : sampleRate(samprate) {}
+
+  virtual void setSampleRate (int samprate) {
+    sampleRate = samprate;
+    phaseIncrement = frequency / static_cast<float> (sampleRate);
+  }
+
+  virtual void setFrequency (float freq) {
+    frequency = freq;
+    phaseIncrement = frequency / static_cast<float> (sampleRate);
+  }
+
+  virtual float processSample() {
+    float phaseIncrement = frequency / static_cast<float>(sampleRate);
+    phase += phaseIncrement;
+    phase = fmod(phase, 1.f);
+    return phase;
+  }
+
+  virtual float setPhase (float ph) {phase = ph;}
+  virtual float getPhase () {return phase;}
+
+protected:
+  float phase = 0.f;
+  int sampleRate = 44100;
+  float frequency = 1.f;
+  float phaseIncrement = frequency / static_cast<float>(sampleRate);
+};
+
+// sinOsc using Nth-order Taylor Series expansion, N adjustable
+// as seen in Gamma https://github.com/LancePutnam/Gamma 
+class SinOsc : public Phasor {
+public: 
+  SinOsc (int samprate) : 
+  Phasor(samprate) {}
+
+  float processSample() override {
+    phase += phaseIncrement;
+    phase = fmod(phase, 1.f);
+   return taylorNSin(
+    fmod(phase + (0.25f*(frequency-1.f)), 1.f) 
+    * twoPi - pi, 
+   N);
+  }
+
+  float setOrder (int order) {N = order;}
+
+protected:
+  int N = 11; // 11 is good
+  const float pi = static_cast<float>(M_PI);
+  const float twoPi = 2.f * pi;
+  const float nTwoPi = -1.f * twoPi;
+  int factorial (int x) {
+    int output = 1;
+    int n = x;
+    while (n > 1) {
+      output *= n;
+      n -= 1;
+    }
+    return output;
+  }
+
+  float taylorNSin (float x, int order) {
+    float output = x;
+    int n = 3;
+    int sign = -1;
+    while (n <= order) {
+     output += sign * (powf(x, n) / factorial(n));
+      sign *= -1;
+      n += 2;
+    }
+    return output;
+  }
+};
+
+template<typename T>
+class PolyphonyEngine {
+public:
+  PolyphonyEngine (int voices, int samprate) : 
+  numVoices(voices), sampleRate(samprate) {}
+
+  void prepare () {
+    for (int i = 0; i < numVoices; i++) {
+      oscBank.push_back(T (sampleRate));
+    }
+  }
+
+  void setFrequency(float freq) {
+    for (int i = 0; i < numVoices; i++) {
+      oscBank[i].setFrequency((i + 1) * freq);
+    }
+  }
+
+  float processSample() {
+    float output = 0.f;
+    for (int i = 0; i < numVoices; i++) {
+      output += oscBank[i].processSample();
+      if (i == 0) {
+        float diff = oscBank[i].getPhase() - last;
+        if (diff < 0) {
+          for (int j = 1; j < numVoices; j++) {
+            oscBank[j].setPhase(oscBank[i].getPhase());
+          }  
+        }
+      last = oscBank[i].getPhase();
+      }
+    }
+    return output * (1.f / numVoices); // <- should scale as a function of numVoices
+  }
+
+protected:
+  int type;
+  int numVoices;
+  int sampleRate;
+  float last;
+  std::vector<T> oscBank;
+};
+
+class PitchShift {
+public:
+  PitchShift (int samprate) : sampleRate(samprate) {}
+
+  void setPitchRatio (float ratio) {pitchRatio = ratio;}
+
+  float processSample(float input) {
+    float frequency = fabs(1000.f * ((1.f - pitchRatio) / windowSize));
+    float phaseIncrement = frequency / static_cast<float>(sampleRate);
+
+    if (pitchRatio < 1.f || pitchRatio > 1.f) { phase += phaseIncrement; } // up or down shifting
+    else { phase = 0.f; } // no shift 
+    phase = fmod(phase, 1.f);
+
+    float phaseTap = 0.f;
+    if (pitchRatio > 1.f) {phaseTap = 1 - phase;} // reverse sawtooth for up shifting  
+    else {phaseTap = phase;}
+
+    this->writeSample(input); // write sample to delay buffer
+
+    int readIndex = bufferSize - 1 - static_cast<int>(round( // readpoint 1
+        phaseTap * (windowSize * (sampleRate / 1000.f))
+        ));
+    int readIndex2 = bufferSize - 1 - static_cast<int>(round( // readpoint 2
+    (fmod(phaseTap + 0.5f, 1) * (windowSize * (sampleRate / 1000.f))
+    )));
+
+    float output = this->readSample(readIndex); // get sample
+    float output2 = this->readSample(readIndex2); // get sample 2
+    float windowOne = cosf((((phaseTap - 0.5f) / 2.f)) * 2.f * M_PI); // gain windowing 
+    float windowTwo = cosf(((fmod((phaseTap + 0.5f), 1.f) - 0.5f) / 2.f) * 2.f * M_PI);// // 
+
+    return output * windowOne + output2 * windowTwo; // windowed output
+  }
+
+  void writeSample (float sample) {
+    for (int i = 0; i < bufferSize - 1; i++) {
+      buffer[i] = buffer[i + 1];
+    }
+    buffer[bufferSize - 1] = sample;
+  }
+
+  float readSample (int index) {
+    return buffer[index];
+  }
+
+private:
+  static const int bufferSize = 96000;
+  float buffer[bufferSize];
+  int writeIndex;
+  int sampleRate;
+  float phase = 0.f;
+  float pitchRatio = 1.f;
+  float windowSize = 22.f; // make adjustable / calculate for optimized ratio? 
+};
+
+struct DSPTester : public App {
+  Parameter volControl{"volControl", "", 0.f, -96.f, 6.f};
+  Parameter rmsMeter{"rmsMeter", "", -96.f, -96.f, 0.f};
+  Parameter pRatio{"pRatio", "", 1.f, 0.f, 2.f};
+  ParameterInt oscFreq{"oscFreq","", 1, 0, 127};
+  ParameterBool audioOutput{"audioOutput", "", false, 0.f, 1.f};
+  ParameterBool filePlayback{"filePlayback", "", false, 0.f, 1.f};
+  gam::SamplePlayer<float, gam::ipl::Linear, gam::phsInc::Loop> player;
+
+  ScopeBuffer scopeBuffer{static_cast<int>(AudioIO().framesPerSecond())};
+  Mesh oscScope{Mesh::LINE_STRIP};
+  PitchShift myShift{static_cast<int>(AudioIO().framesPerSecond())};
+
+  PolyphonyEngine<SinOsc> osc{5, static_cast<int>(AudioIO().framesPerSecond())};
+  void onInit() {
+    // set up GUI
+    auto GUIdomain = GUIDomain::enableGUI(defaultWindowDomain());
+    auto &gui = GUIdomain->newGUI();
+    gui.add(volControl); // add parameter to GUI
+    gui.add(rmsMeter);
+    gui.add(audioOutput); 
+    gui.add(filePlayback); 
+    gui.add(oscFreq);
+    gui.add(pRatio);
+    
+    //load file to player
+    player.load("../Resources/Singing.wav");
+
+    //prepare osc
+    osc.prepare();
+    osc.setFrequency(1.f);
+  }
+
+  void onCreate() {
+    for (int i = 0; i < 44100; i++) {
+      oscScope.vertex((i / 44100.f) * 2 - 1, 0);
+    }
+  }
+
+  void onAnimate(double dt) {
+    for (int i = 0; i < 44100; i++) {
+      oscScope.vertices()[i][1] = scopeBuffer.readSample(i);
+    }
+    osc.setFrequency(oscFreq); // <- optimzie with if(changed) architecture
+  }
+
+  bool onKeyDown(const Keyboard &k) override {
+    if (k.key() == 'm') { // <- on m, muteToggle
+      audioOutput = !audioOutput;
+      cout << "Mute Status: " << audioOutput << endl;
+    }
+    if (k.key() == 'p') { // <- on p, playTrack
+      filePlayback = !filePlayback;
+      player.reset();
+      cout << "File Playback: " << filePlayback << endl; 
+    }
+    return true;
+  }
+  float last;
+  void onSound(AudioIOData& io) override {
+    // audio throughput
+    float bufferPower = 0;
+    float volFactor = dBtoA(volControl);
+    myShift.setPitchRatio(pRatio);
+
+    // audio throughput
+    while(io()) { 
+      float outputL = myShift.processSample(player(0)) * volFactor * audioOutput;
+      if (filePlayback) {
+        for (int channel = 0; channel < io.channelsOut(); channel++) {
+          if (channel % 2 == 0) {
+            io.out(channel) = outputL;
+          } else {
+            io.out(channel) = outputL;
+          }
+        }
+      } else {
+        io.out(0) = osc.processSample() * volFactor * audioOutput;
+        io.out(1) = io.out(0);
+      }
+
+      // feed to oscilliscope
+      if (filePlayback) {
+        scopeBuffer.writeSample((io.out(0) + io.out(1)));
+      } else {
+        //scopeBuffer.writeSample((io.out(0) + io.out(1)));
+        scopeBuffer.writeSample(io.out(0));
+      }
+
+      // feed to analysis buffer
+      for (int channel = 0; channel < io.channelsIn(); channel++){
+        bufferPower += powf(io.out(channel), 2);
+      }
+      // overload detector
+      if (io.out(0) > 1.f || io.out(1) > 1.f) {
+        cout << "CLIP!" << endl;
+      }
+    }
+    bufferPower /= io.framesPerBuffer();
+    rmsMeter = ampTodB(bufferPower);
+  }
+
+  void onDraw(Graphics &g) {
+    g.clear(0);
+    g.color(1);
+    g.camera(Viewpoint::IDENTITY); // Ortho [-1:1] x [-1:1]
+    g.draw(oscScope);
+  }
+};
+  
+int main() {
+  DSPTester app;
+  
+  // Allows for manual declaration of input and output devices, 
+  // but causes unpredictable behavior. Needs investigation.
+  app.audioIO().deviceIn(AudioDevice("MacBook Pro Microphone"));
+  app.audioIO().deviceOut(AudioDevice("MacBook Pro Speakers"));
+  cout << "outs: " << app.audioIO().channelsOutDevice() << endl;
+  cout << "ins: " << app.audioIO().channelsInDevice() << endl;
+  //app.player.rate(1.0 / app.audioIO().channelsOutDevice());
+  app.configureAudio(44100, 128, app.audioIO().channelsOutDevice(), app.audioIO().channelsInDevice());
+  
+  
+  /*
+  // Declaration of AudioDevice using aggregate device
+  AudioDevice alloAudio = AudioDevice("Volt 276");
+  alloAudio.print();
+  app.player.rate(1.0 / alloAudio.channelsOutMax());
+  app.configureAudio(alloAudio, 44100, 128, alloAudio.channelsOutMax(), 2);
+  */
+
+  app.start();
+}
