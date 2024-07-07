@@ -1,3 +1,3 @@
-Repository for documenting my experimentation with DSP code in C++ 
+# THIS PROJECT IS NO LONGER MAINTAINED. 
 
-Dependencies: requires AlloLib. See https://github.com/AlloSphere-Research-Group/allolib_playground
+## Check out [Jaffrack](https://github.com/joeljaffesd/Jaffrack) to see my more recent audio DSP work.
